@@ -17,6 +17,8 @@
 #include <sigutils/taps.h>
 #include <sigutils/iir.h>
 #include <alsa/asoundlib.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 #include <linux/if.h>
 #include <linux/if_tun.h>
 
