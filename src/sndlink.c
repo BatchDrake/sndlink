@@ -29,11 +29,19 @@
 
 extern struct sigutils_block_class su_block_class_ALSA;
 
+const char *
+sndlink_get_interface(const sndlink_t *link)
+{
+  return link->tapname;
+}
+
 static int
 sndlink_tun_alloc(char *new_name, const char *dev, int flags)
 {
   struct ifreq ifr;
   int fd = -1;
+  unsigned int n = 0;
+  SUBOOL name_found = SU_FALSE;
 
   if ((fd = open(SNDLINK_CLONE_DEV, O_RDWR)) == -1)
     goto fail;
@@ -43,11 +51,23 @@ sndlink_tun_alloc(char *new_name, const char *dev, int flags)
 
    ifr.ifr_flags = flags;   /* IFF_TUN or IFF_TAP, plus maybe IFF_NO_PI */
 
-   if (*dev)
-     strncpy(ifr.ifr_name, dev, IFNAMSIZ);
+   if (dev == NULL || *dev == '\0')
+     dev = SNDLINK_DEV;
 
-   if (ioctl(fd, TUNSETIFF, &ifr) == -1)
-     goto fail;
+   do {
+     if (snprintf(ifr.ifr_name, IFNAMSIZ, "%s%d", dev, n++) == IFNAMSIZ)
+       goto fail;
+
+     if (ioctl(fd, TUNSETIFF, &ifr) == -1) {
+       if (errno != EBUSY) {
+         snd_err("ioctl TUNSETIFF failed: %s\n", strerror(errno));
+         goto fail;
+       }
+     } else {
+       name_found = SU_TRUE;
+     }
+   } while (!name_found);
+
 
   /* if the operation was successful, write back the name of the
    * interface to the variable "dev", so the caller can know
@@ -117,7 +137,7 @@ sndlink_open_playback(const char *device, unsigned int rate)
 
 fail:
   if (err < 0)
-    fprintf(stderr, "[e] ALSA playback failed: %s\n", snd_strerror(err));
+    snd_err("ALSA playback failed: %s\n", snd_strerror(err));
 
   if (pcm != NULL) {
     snd_pcm_drain(pcm);
@@ -169,7 +189,7 @@ hexdump(const void *data, uint32_t size)
 
   for (i = 0; i < size; ++i) {
     if ((i & 0xf) == 0)
-      fprintf(stderr, "[i] RX: %08x  ", i);
+      snd_info("RX: %08x  ", i);
 
     fprintf(stderr, "%s%02x ", (i & 0xf) == 8 ? " " : "", bytes[i]);
 
@@ -194,7 +214,8 @@ hexdump(const void *data, uint32_t size)
     fprintf(stderr, "\n");
   }
 
-  fprintf(stderr, "\n[i] RX: %08x  \n", i);
+  fprintf(stderr, "\n");
+  snd_info("RX: %08x  \n", i);
 }
 
 /* Shamelessly borrowed from Wikipedia */
@@ -225,14 +246,14 @@ sndlink_demod_thread(void *data)
   SUBITS bits;
   SUSYMBOL sym;
 
-  fprintf(stderr, "[i] Demodulator: starting modem...\n");
+  snd_info("Demodulator: starting modem...\n");
 
   if (!su_modem_start(link->modem)) {
-    fprintf(stderr, "[e] su_modem_start: failed to start modem\n");
+    snd_err("su_modem_start: failed to start modem\n");
     goto done;
   }
 
-  fprintf(stderr, "[i] Demodulator: reading symbols from modem...\n");
+  snd_info("Demodulator: reading symbols from modem...\n");
   while ((sym = su_modem_read(link->modem)) != SU_EOS) {
     if (sym == SU_NOSYMBOL)
       continue;
@@ -282,16 +303,14 @@ sndlink_demod_thread(void *data)
               /* Too big, probably an error. Get back to searching */
               link->demod_state = SNDLINK_DEMOD_STATE_SEARCHING;
             } else if (as_frame->len == 0) {
-              fprintf(
-                  stderr,
-                  "[i] RX: Keep-alive frame (seq=%d)\n",
+              snd_info(
+                  "RX: Keep-alive frame from remote peer (seq=%d)         \r",
                   as_frame->seq);
               link->demod_state = SNDLINK_DEMOD_STATE_SEARCHING;
             } else {
               /* Everything alright, start reading */
-              fprintf(
-                  stderr,
-                  "[i] RX: Synced to %d byte frame (seq=%d)\n",
+              snd_info(
+                  "RX: Sync to %d byte frame (seq=%d)                     \r",
                   as_frame->len,
                   as_frame->seq);
               memset(as_frame->data, 0, as_frame->len);
@@ -307,12 +326,15 @@ sndlink_demod_thread(void *data)
             link->demod_ptr = 0;
 
             sndlink_toggle_scramble(as_frame->data, as_frame->len);
+            snd_info("RX: Received frame %d byte frame\n", as_frame->len);
             hexdump(as_frame->data, as_frame->len);
             if (write(
                 link->tapfd,
                 as_frame->data,
                 as_frame->len) != as_frame->len) {
-              fprintf(stderr, "[e] Failed to send packet back to kernel\n");
+              snd_warn(
+                  "Failed to send packet back to kernel: %s\n",
+                  strerror(errno));
             }
 
             link->demod_state = SNDLINK_DEMOD_STATE_SEARCHING;
@@ -323,7 +345,7 @@ sndlink_demod_thread(void *data)
   }
 
 done:
-  fprintf(stderr, "[e] Demodulator thread finished\n");
+  snd_err("Demodulator thread finished\n");
 
   return NULL;
 }
@@ -356,10 +378,7 @@ sndlink_new(const struct sndlink_params *params)
 
   /* Initialize TAP device */
   TRYCATCH(
-      (new->tapfd = sndlink_tun_alloc(
-          new->tapname,
-          SNDLINK_DEV,
-          IFF_TAP)) != -1,
+      (new->tapfd = sndlink_tun_alloc(new->tapname, NULL, IFF_TAP)) != -1,
       goto fail);
 
   /* Open soundcard for playback */
@@ -380,7 +399,7 @@ sndlink_new(const struct sndlink_params *params)
           1.),
       goto fail);
 
-  fprintf(stderr, "[i] RRC size: %d taps\n", new->mf.x_size);
+  snd_info("RRC size: %d taps\n", new->mf.x_size);
 
   SU_TRYCATCH(
       new->diffenc = su_codec_new("diff", 2, SU_FALSE),
@@ -489,10 +508,10 @@ sndlink_mod_loop(sndlink_t *link)
           link->tapfd,
           link->ul_eth_frame,
           SNDLINK_FRAME_MTU)) == -1) {
-        fprintf(stderr, "[e] Read frame failed: %s\n", strerror(errno));
+        snd_err("Read frame failed: %s\n", strerror(errno));
         return SU_FALSE;
       } else {
-        fprintf(stderr, "[i] TX: %d byte Ethernet frame\n", got);
+        snd_info("TX: %d byte Ethernet frame\n", got);
       }
     }
     link->ul_eth_frame_len = got;
@@ -529,12 +548,11 @@ sndlink_mod_loop(sndlink_t *link)
                 link->h_play,
                 link->buffer,
                 link->buffer_size)) == -EPIPE) {
-              fprintf(stderr, "[!] Samples lost while writing\n");
+              snd_warn("Samples lost while writing\n");
               snd_pcm_prepare(link->h_play);
             } else if (err < 0) {
-              fprintf(
-                stderr,
-                "[e] Fatal: can't write to PCM device: %s\n",
+              snd_err(
+                  "Fatal: can't write to PCM device: %s\n",
                 snd_strerror(err));
               return SU_FALSE;
             }
@@ -574,10 +592,7 @@ sndlink_init(void)
   TRYCATCH(su_lib_init(), return SU_FALSE);
 
   if (!su_block_class_register(&su_block_class_ALSA)) {
-    fprintf(
-        stderr,
-        "%s: failed to register ALSA block\n",
-        __FUNCTION__);
+    snd_err("%s: failed to register ALSA block\n", __FUNCTION__);
     return SU_FALSE;
   }
 

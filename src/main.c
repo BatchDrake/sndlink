@@ -66,10 +66,11 @@ main (int argc, char *argv[], char *envp[])
     exit(EXIT_FAILURE);
   }
 
-  fprintf(stderr, "[i] sndlink v0.1 started\n");
-  fprintf(stderr, "[i] (c) Gonzalo J. Carracedo <BatchDrake@gmail.com>\n");
-  fprintf(stderr, "[i]   Uplink carrier: %d Hz\n", params.uplink_freq);
-  fprintf(stderr, "[i]   Downlink carrier: %d Hz\n", params.downlink_freq);
+  snd_info("sndlink v0.1 started\n");
+  snd_info("(c) Gonzalo J. Carracedo <BatchDrake@gmail.com>\n");
+  snd_info("  Network interface: %s\n", sndlink_get_interface(link));
+  snd_info("  Uplink carrier: %d Hz\n", params.uplink_freq);
+  snd_info("  Downlink carrier: %d Hz\n", params.downlink_freq);
 
   if (!sndlink_run(link)) {
     fprintf(stderr, "%s: failed to run sndlink loop\n", argv[0]);

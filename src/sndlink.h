@@ -20,9 +20,13 @@
 #include <linux/if.h>
 #include <linux/if_tun.h>
 
+#define snd_err(fmt, arg...) fprintf(stderr, "[e] " fmt, ##arg)
+#define snd_info(fmt, arg...) fprintf(stderr, "[i] " fmt, ##arg)
+#define snd_warn(fmt, arg...) fprintf(stderr, "[!] " fmt, ##arg)
+
 #define SNDLINK_DEFAULT_BUFFER_SIZE (4096 / sizeof(int16_t))
 #define SNDLINK_MF_SPAN 11
-#define SNDLINK_DEV "sndlan0"
+#define SNDLINK_DEV "sndlan"
 #define SNDLINK_CLONE_DEV "/dev/net/tun"
 #define SNDLINK_ALSA_DEV "default"
 #define SNDLINK_FRAME_MTU 1500
@@ -138,6 +142,7 @@ struct sndlink {
 typedef struct sndlink sndlink_t;
 
 void sndlink_destroy(sndlink_t *link);
+const char *sndlink_get_interface(const sndlink_t *link);
 sndlink_t *sndlink_new(const struct sndlink_params *params);
 SUBOOL sndlink_run(sndlink_t *link);
 SUBOOL sndlink_init(void);
